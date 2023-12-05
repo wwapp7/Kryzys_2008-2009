@@ -1,1 +1,2 @@
 # ProjektAnalizaDanych
+Głównym tematem projektu jest przygotowanie i zapoznanie się z danymi do analizy pod kątem wpływu globalnego kryzysu finansowego przypadającego na lata 2008-2009 na gospodarki wybranych krajów. W pierwszej części zajmiemy się przygotowaniem danych pobierając je z serwisu gapminder. Jako lata reprezentatywne wybierzemy 2007 oraz 2010 rok. Następnie przejdziemy do zapoznania się z zawartymi w nich wartościami, posługując się zadawaniem pytań badawczych.
