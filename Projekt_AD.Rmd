@@ -1,0 +1,650 @@
+---
+title: "Badanie wpływu kryzysu z lat 2008-2009 na wybrane kraje"
+author: "Wiktor Wojcik"
+date: "2023-12-02"
+output: 
+  rmdformats::downcute:
+    toc_depth: 3
+    df_print: paged
+---
+
+```{css, echo=FALSE}
+h1 {
+  text-align: center;
+}
+
+h4 {
+  text-align: right;
+}
+
+.scroll-350 {
+  max-height: 350px;
+  overflow-y: auto;
+}
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+## Opis projektu
+Głównym tematem projektu jest przygotowanie i zapoznanie się z danymi do analizy pod kątem wpływu globalnego [kryzysu finansowego przypadającego na lata 2008-2009](https://pl.wikipedia.org/wiki/Globalny_kryzys_finansowy) na gospodarki wybranych krajów. W pierwszej części zajmiemy się przygotowaniem danych pobierając je z serwisu [gapminder](https://www.gapminder.org/). Jako lata reprezentatywne wybierzemy 2007 oraz 2010 rok. Następnie przejdziemy do zapoznania się z zawartymi w nich wartościami, posługując się zadawaniem pytań badawczych.
+
+## 1. Pobieranie danych
+### 1.1. Nazwy krajów i kontynentów
+Na początku będziemy potrzebować nazw krajów oraz kontynetu, na którym leżą. W celu pozyskania tych danych posłużymy się standardowym datasetem zawartym w R, czyli `gapminderem`. Wpierw jednak musimy standardowo wywołać bibliotekę, do której należy wcześniej wspomniany zbiór danych oraz bibliotekę `dplyr`, którą wykorzystamy do wydobywania interesujących nas danych.
+```{r}
+library(gapminder)
+library(dplyr)
+```
+Następnie możemy przejść do wydobycia potrzebnych nam kolumn (jako że w datasecie `gapminder` jest kilka wierszy dla danego kraju, to pozbywamy się powtarzających rekordów za pomocą funkcji `distinct()`):
+```{r}
+data <- gapminder %>%
+  select(country = 1, continent = 2) %>%
+  distinct()
+```
+Sprawdźmy, czy wszystko poszło pomyślnie:
+```{r}
+data
+```
+Oprócz tego upewnimy się jeszcze, że zmienne `continent` typu `factor` mają dodane poziomy (`levels()`):
+```{r}
+levels(gapminder$continent)
+```
+Możemy teraz przejść do dodawania kolejnych interesujących nas zmiennych.  
+  
+### 1.2. PKB per Capita
+Jako że interesuje nas wpływ kryzysu z lat 2008-2009 na gospodarki krajów, to dość logicznym wyjściem będzie badanie PKB per capita. Musimy więc zaimportować tę statystykę i dołączyć ją do naszych danych. Posłużymy się do tego datasetem znalezionym w serwisie gapminder (podane dane będą wyrażone w dolarach amerykańskich o kursie z 2010 roku). Po pobraniu pliku musimy go wczytać (wpierw musimy jednak wywołać bibliotekę `readr`):
+```{r}
+library(readr)
+gdpPerCap <- read_csv("Downloads/gdppercapita_us_inflation_adjusted.csv")
+```
+Zapoznamy się teraz ze strukturą danych i ich wyglądem za pomocą funkcji `summary()` oraz `head()`:
+```{r, class.output="scroll-350"}
+head(gdpPerCap)
+str(gdpPerCap)
+```
+Jak widzimy, wszystkie zmienne są typu `character` i są zapisane z symbolem "k", który oznacza tysiące. Posiadając już te informacje, możemy przejść do wydobycia odpowiednich danych:
+```{r}
+gdpPerCap <- gdpPerCap %>%
+             select(country, gdp2007 = `2007`, gdp2010 = `2010`) %>%
+             mutate(gdp2007 = as.numeric(sub("k", "e3", gdp2007, fixed = TRUE)),
+                    gdp2010 = as.numeric(sub("k", "e3", gdp2010, fixed = TRUE)))
+gdpPerCap
+```
+Jesteśmy teraz gotowi do przyłączenia tej tabeli do naszej głównej tj. `data`:
+```{r}
+data <- inner_join(data, gdpPerCap, by = "country")
+data
+```
+### 1.3. Wskaźnik bezrobocia
+Teraz w analogiczny sposób przyłączać będziemy wskaźnik bezrobocia wyrażony w procentach:
+```{r, class.output="scroll-350"}
+unemployment_rate <- read_csv("Downloads/aged_15plus_unemployment_rate_percent.csv")
+head(unemployment_rate)
+str(unemployment_rate)
+```
+W tym przypadku, jako że wskaźnik bezrobocia jest podawany w procentach, nie mamy problemu ze zmiennymi typu `character`, tylko od razu dane przyjmują wartości `double`. Możemy więc bezproblemowo przejść do przefiltrowania danych:
+```{r, class.output="scroll-350"}
+unemployment_rate <- unemployment_rate %>%
+                     select(country, unemployment2007 = `2007`, 
+                            unemployment2010 = `2010`)
+unemployment_rate
+```
+Jak widzimy, w danych tych jest dużo braków, ale pozbędziemy się ich na końcu.  
+  
+Teraz po prostu dołączamy dane do tabeli głównej:
+```{r, class.output="scroll-350"}
+data <- inner_join(data, unemployment_rate, by = "country")
+data
+```
+### 1.4. Inwestycje zagraniczne
+Kolejnym krokiem będzie przyłączenie danych (w procentach PKB) dotyczących zagranicznych inwestycji przeprowadzanych w latach 2007 i 2010 na terenie badanych krajów. Będzie to ważna informacja, ponieważ inwestorzy zazwyczaj wybierają kraje, w których ich przedsięwzięcia będą bezpieczne tj. m.in. gospodarka jest stabilna. Wywołajmy więc pobrane wcześniej dane:
+```{r, class.output="scroll-350"}
+foreign_investments <- read_csv("Downloads/foreign_direct_investment_net_inflows_percent_of_gdp.csv")
+head(foreign_investments)
+str(foreign_investments)
+```
+W tym przypadku znowu musimy przekształcić dane na zmienne typu `double`:
+```{r}
+foreign_investments <- foreign_investments %>%
+                       select(country,foreignInvestments2007 = `2007`,
+                              foreignInvestments2010 = `2010`) %>%
+                       mutate(foreignInvestments2007 = as.double(foreignInvestments2007),
+                              foreignInvestments2010 = as.double(foreignInvestments2010))
+foreign_investments
+```
+Po wszystkim dołączamy dane:
+```{r, class.output="scroll-350"}
+data <- inner_join(data, foreign_investments, by = "country")
+data
+```
+### 1.5. Współczynnik Giniego
+Ostatnim już badanym czynnikiem będzie współczynnik Giniego, badający nierówności zarobkowe w społeczeństwie. Przyjmuje on wartości pomiędzy [0,100], gdzie 0 to idealnie równe zarobki, a 100 idealnie nierówne. Postępujemy analogicznie jak wcześniej.
+```{r, class.output="scroll-350"}
+gini_index <- read_csv("Downloads/gini_2100.csv")
+head(gini_index)
+str(gini_index)
+```
+W tym przypadku dane są numeryczne, więc musimy tylko wybrać interesujące nas kolumny i dołączyć je do głównej tabeli:
+```{r, class.output="scroll-350"}
+gini_index <- gini_index %>%
+              select(country = 1, gini2007 = 209, gini2010 = 212)
+gini_index
+data <- inner_join(data, gini_index, by = "country")
+data
+```
+## 2. Przygotowywanie danych
+Mając już gotową tabele z danymi, możemy przejść do ich przystosowywania pod analizę.  
+
+### 2.1. Brakujące dane 
+
+Jak już wcześniej zauważyliśmy, wiele danych jest niekompletnych. Niestety w przypadku badanych przez nas wartości nie mamy jak sensowanie wyestymować i zapełnić braki w danych. Badając jednak poszczególne kraje, nie wpłynie to negatywanie na nasze badania, ponieważ z każdego z kontynentów wybierzemy reprezantatywną grupę, której dane udało znaleźć się na stronie gapminder. Możemy więc usunąć kraje, których zmienne nie są możliwe do zbadania:
+```{r, class.output="scroll-350"}
+data <- na.omit(data)
+data
+```
+Jak widać, dalej pozostajemy ze sporą ilością danych gotowych do analizy.  
+  
+### 2.2. Zmiany wizualne
+Następnie zmienimy dane ilościowe tak, aby były one bardziej czytelne dla użytkownika. Zaczniemy od zmienienia PKB per capita z 2007 oraz 2010 roku na tysiące:
+```{r, class.output="scroll-350"}
+data <- data %>%
+        mutate(gdp2007 = gdp2007 / 1000,
+               gdp2010 = gdp2010 / 1000)
+data
+```
+Jak widać, dane są teraz o wiele bardziej przystępne dla użytkownika. Dalej zajmiemy się zmiennymi liczbowymi odpowiadającymi procentom. Przekształcimy ich format, aby zuniwersalizować liczbę wyświetlanych cyfr do co najwyżej dwóch po przecinku. Najpierw jednak sprawdźmy, które kolumny wymagają zmiany:
+```{r, class.output="scroll-350"}
+data
+```
+Można zauważyć, że wartościami, których format nie jest zgodny, są `foreignInvestments2007` i `foreignInvestments2010`. Przeformujmy więc je:
+```{r, class.output="scroll-350"}
+data <- data %>%
+        mutate(foreignInvestments2007 =
+                 as.numeric(format(round(foreignInvestments2007,
+                                              digits = 2), nsmall = 2)),
+               foreignInvestments2010 =
+                 as.numeric(format(round(foreignInvestments2010,
+                                              digits = 2), nsmall = 2)))
+data
+```
+Teraz nasze dane są gotowe pod względem wizualnym dla użytkownika.
+
+### 2.3. Nierówności
+Kolejnym krokiem będzie sprawdzenie danych pod kątem jakichkolwiek nierówności.
+Na początku sprawdzimy liczebność krajów dla poszczególnych kontynentów.
+```{r, class.output="scroll-350"}
+table(data$continent)
+```
+Możemy zauważyć, że w naszych danych znajdują się tylko dwa kraje z Oceanii. Sprawdzimy jakie:
+```{r, class.output="scroll-350"}
+data[data$continent == "Oceania",]
+```
+Jak widzimy, są nimi Australia oraz Nowa Zelandia. Zazwyczaj w takich przypadkach moglibyśmy pokusić się o dołączenie mało licznej klasy (w tym przypadku kontynentu) do innej - liczniejszej o podobnych właściwościach (tutaj gospodarkach). Jednak w naszym przypadku, gdy analizujemy kraje, a więc w późniejszych krokach będziemy badać je również grupami (kontynentami), nie ma to najmniejszego sensu. Jak możemy się domyślić, Australia i Nowa Zelandia są najbardziej rozwiniętymi spośród krajów Oceanii. Nie byłyby więc reprezentatywną próbą dla dalszych badań względem kontynentów z uwagi na to, że potencjalne różnice pomiędzy danymi z 2007 i 2010 roku mogą być związane z rozwinięciem gospodarki krajowej (co będziemy potem próbowali zbadać). Wnioskujemy z tego, że kraje te nie mogą być oznaczone jako Oceania, ponieważ nazwa ta będzie myląca w późniejszych etapach pracy z danymi. Są one jednak jak najbardziej wiarygodnymi rekordami badanego zjawiska, ponieważ mogą być analizowane wraz z innymi podobnymi gospodarkami (w późniejszym etapie wprowadzimy dodatkową zmienną typu `factor`, która będzie miała za zadanie klasyfikować kraje ze względu na poziom rozwinięcia gospodarki). Zmienimy więc wartość kolumny `continent` tych krajów na `Inny` (nie będziemy potem interpretować tych rekordów względem kontynentu z uwagi na brak wiarygodności danych):
+```{r}
+levels(data$continent)[levels(data$continent)=="Oceania"] <- "Inny"       
+data[data$continent == "Inny",]
+```
+Oprócz wcześniej wspomnianej Oceanii, kolejnym kontynentem, z którego mamy mało danych jest Afryka. Posiada ona 8 pozycji. Najpierw je wyświetlmy:
+```{r, class.output="scroll-350"}
+data[data$continent == "Africa",]
+```
+Jako że również jest to mała próbka, a wiadomym jest, że Afryka charakteryzuje się dużym zróżnicowaniem gospodarczym, to i w tym przypadku postępujemy analogicznie jak z Oceanią:
+```{r}
+levels(data$continent)[levels(data$continent)=="Africa"] <- "Inny"       
+data[data$continent == "Inny",]
+```
+Kończymy więc ten etap przygotowywania danych wraz z grupą krajów, które będziemy mogli badać, ale nie pod względem ich przynależności do danego kontynentu.
+  
+### 2.4. Klasyfikacja
+Ostatnim już racjonalnym krokiem będzie, tak jak już wcześniej wspomnieliśmy, podzielenie krajów ze względu na rozwój gospodarczy. Będzie to przydatne w późniejszych etapach badania danych. W tym celu potrzebujemy wyznaczyć sposób klasyfikacji takich krajów. Pierwszym narzucającym się pomysłem jest podział względem PKB per capita. Znając już zmienną, po której będziemy przydzielać kategorie danym krajom, musimy wyznaczyć sposób klasyfikacji. Przydatne w tym procesie będzie zbadanie rozkładu PKB per capita wśród naszych danych. Zacznijmy więc od wyznaczenia podstawowych statystyk opisowych (na początku dla danych z 2007 roku). Użyjemy do tego funkcji `describe()` z pakietu `psych`:
+```{r, class.output="scroll-350"}
+library(psych)
+describe(data$gdp2007)
+```
+Jak już możemy wstępnie zauważyć, najprawdopodobniej nasze zmienne są bardzo zróżnicowane. Badając jednak rozrzut wewnątrz jednej zmiennej, w szczególności powninniśmy sprawdzić współczynnik zmienności, który możemy obliczyć za pomocą wzoru:
+$$wspolczynnik\text{ }zmiennosci = \frac{odchylenie\text{ }standardowe}{srednia}$$
+W tym celu stworzymy funkcję odpowiadającą za obliczanie tej statystyki:
+```{r, class.output="scroll-350"}
+wsp_zmiennosci <- function(x) {
+  return (sd(x) / mean(x))
+}
+```
+A następnie wywołamy ją na zmiennych:
+```{r, class.output="scroll-350"}
+wsp_zmiennosci(data$gdp2007)
+```
+Tak jak wcześniej przypuszczaliśmy, nasze dane są bardzo zróżnicowane. Zilustrujmy więc je histogramem:
+```{r, class.output="scroll-350"}
+hist(data$gdp2007,
+     main = "Rozkład PKB per capita w 2007 roku",
+     xlab = "PKB per capita",
+     ylab = "Liczba krajów")
+```
+
+Jak widzimy, rozrzuty w danych są bardzo znaczące. Na podstawie powyższego wykresu spróbujemy ustalić klasyfikację wielkości gospodarki na:
+$$\begin{align*}PKB\text{ }per\text{ }capita \leq 10000&\quad\mathrm{-}\quad gospodarka\text{ }slabo\text{ }rozwinieta\\
+10000<PKB\text{ }per\text{ }capita \leq 25000&\quad\mathrm{-}\quad gospodarka\text{ }srednio\text{ }rozwinieta\\
+PKB\text{ }per\text{ }capita>25000&\quad\mathrm{-}\quad gospodarka\text{ }wysoko\text{ }rozwinieta\\\end{align*}
+$$
+Sprawdźmy więc, ile byłoby krajów w każdej z kategorii, aby zdecydować, czy nasze wybrane przedziały będą odpowiednie.
+```{r, class.output="scroll-350"}
+print(count(data[data$gdp2007 <= 10.000,]))
+print(count(data[data$gdp2007 > 10.000 & data$gdp2007 <= 25.000,]))
+print(count(data[data$gdp2007 > 25.000,]))
+```
+Jak widzimy, nasz środkowy przedział jest zbyt mało liczny w porównaniu do reszty. Musimy zatem zwiększyć jego szerokość kosztem pierwszego (zbyt licznego) przedziału. Zaproponujmy nowe przedziały:
+$$\begin{align*}PKB\text{ }per\text{ }capita \leq 5000&\quad\mathrm{-}\quad gospodarka\text{ }slabo\text{ }rozwinieta\\
+5000<PKB\text{ }per\text{ }capita \leq 25000&\quad\mathrm{-}\quad gospodarka\text{ }srednio\text{ }rozwinieta\\
+PKB\text{ }per\text{ }capita>25000&\quad\mathrm{-}\quad gospodarka\text{ }wysoko\text{ }rozwinieta\\\end{align*}
+$$
+I poraz kolejny zweryfikujmy jego zasadność:
+```{r, class.output="scroll-350"}
+print(count(data[data$gdp2007 <= 5.000,]))
+print(count(data[data$gdp2007 > 5.000 & data$gdp2007 <= 25.000,]))
+print(count(data[data$gdp2007 > 25.000,]))
+```
+Teraz przedziały te są w miarę możliwości równe. Możemy więc przejść do dołączenia nowej zmiennej do naszych danych. W pierwszej kolejności utworzymy wektor zawierający nasze nowe wartości:
+```{r, class.output="scroll-350"}
+klasyfikacja2007 <- c()
+
+for (kraj in data$gdp2007) {
+  if (kraj <= 5.000) {
+    klasyfikacja2007 <- append(klasyfikacja2007, "gospodarka słabo rozwinięta")
+  }
+  else if (kraj <= 25.000) {
+    klasyfikacja2007 <- append(klasyfikacja2007, "gospodarka średnio rozwinięta")
+  }
+  else {
+    klasyfikacja2007 <- append(klasyfikacja2007, "gospodarka wysoko rozwinięta")
+  }
+}
+
+klasyfikacja2007
+```
+Teraz możemy dołączyć nową zmienną do tabeli głównej:
+```{r, class.output="scroll-350"}
+data <- cbind(data, klasyfikacja2007)
+data <- data %>%
+        rename(classification2007 = `klasyfikacja2007`)
+data
+```
+Jak jednak widzimy nowa kolumna przyjmuje wartości typu `character`, a więc musimy zmienić je na typ `factor`:
+```{r, class.output="scroll-350"}
+lvls <- c("gospodarka słabo rozwinięta", "gospodarka średnio rozwinięta",
+          "gospodarka wysoko rozwinięta")
+data$classification2007 <- factor(data$classification2007, lvls)
+data
+```
+Z ciekawości możemy analogicznie postąpić z PKB per capita z 2010 roku, aby sprawdzić (na późniejszym etapie), czy któremuś z badanych krajów zmieniła się klasyfikacja ze względu na kryzys finansowy z lat 2008-2009.
+```{r, class.source="scroll-350" ,class.output="scroll-350"}
+klasyfikacja2010 <- c()
+
+for (kraj in data$gdp2010) {
+  if (kraj <= 5.000) {
+    klasyfikacja2010 <- append(klasyfikacja2010, "gospodarka słabo rozwinięta")
+  }
+  else if (kraj <= 25.000) {
+    klasyfikacja2010 <- append(klasyfikacja2010, "gospodarka średnio rozwinięta")
+  }
+  else {
+    klasyfikacja2010 <- append(klasyfikacja2010, "gospodarka wysoko rozwinięta")
+  }
+}
+
+data <- cbind(data, klasyfikacja2010)
+data <- data %>%
+        rename(classification2010 = `klasyfikacja2010`)
+
+data$classification2010 <- factor(data$classification2010, lvls)
+data
+```
+
+## 3. Badanie danych
+Jako że w poprzednim etapie przygotowywaliśmy dane pod ich analizę, to w dużym stopniu zapoznaliśmy się z ich strukturą. 
+  
+### 3.1. Struktura danych
+Mimo wszystko, na początku ich badania jeszcze raz sprawdzimy sobie strukturę tabeli głównej. Dokonamy tego przy pomocy funkcji `str()`:
+```{r, class.output="scroll-350"}
+str(data)
+```
+Jak możemy zauważyć, mamy 1 kolumnę typu `character`, 8 kolumn typu `num` oraz 3 kolumny typu `factor`. W ramach przypomnienia wyświetlimy jeszcze poziomy wszystkich trzech zmiennych typu `factor`:
+```{r, class.output="scroll-350"}
+levels(data$continent)
+levels(data$classification2007)
+levels(data$classification2010)
+```
+Jak widzimy, poziomy dwóch ostatnich są identyczne, ponieważ zmienne odpowiadają nam na to samo pytanie, ale dla danych z innego roku. Natomiast pierwsza kolumna odpowiada za nazwę kontynentu, na którym leży dane państwo. Pamiętajmy jednak ze wcześniejszego przygotowywania danych, że dane z wartością `Inny` w kolumnie `continent` nie mogą być analizowane pod kątem kontynentu ze względu na ich brak reprezentatywności względem części świata, z których pochodzą (mała liczba).
+  
+### 3.2. Statystyki opisowe
+W celach wyznaczenia podstawowych statystyk opisowych (oczywiście tylko dla zmiennych ilościowych) posłużymy się funkcją `summary()`:
+```{r, class.output="scroll-350"}
+summary(data[3:10])
+```
+Oprócz tego wyliczymy jeszcze współczynnik zmienności, za pomocą wcześniej już zdefiniowanej funkcji `wsp_zmiennosci()`, dla każdej z kolumn:
+```{r, class.output="scroll-350"}
+sapply(data[3:10], wsp_zmiennosci)
+```
+Opierając się więc o informację ze [strony o statystyce](https://obliczeniastatystyczne.pl/wspolczynnik-zmiennosci/), odnośnie interpretacji współczynnika zmienności tj.:
+$$\begin{align*}Wspolczynnik\text{ }zmiennosci \leq 0.25&\quad\mathrm{-}\quad mala\text{ }zmiennosc\\
+0.25<Wspolczynnik\text{ }zmiennosci\leq 0.45&\quad\mathrm{-}\quad przecietna\text{ }zmiennosc\\
+0.45<Wspolczynnik\text{ }zmiennosci\leq 1&\quad\mathrm{-}\quad silna\text{ }zmiennosc\\
+Wpolczynnik\text{ }zmiennosci>1&\quad\mathrm{-}\quad bardzo\text{ }silna\text{ }zmiennosc\\\end{align*}
+$$
+Możemy stwierdzić, że nasze dane charakteryzują się w większości silną lub bardzo silną zmiennością. Tylko współczynnik Giniego, który odpowiada za mierzenie nierówności społecznych, ma zmienność wahającą się pomiędzy słabą a przeciętną.   
+  
+Wykonamy teraz te same operacje na zmiennych podzielonych ze względu na kontynent i spróbujemy odpowiedzieć na pytanie, czy zmienność ta różni się pomiędzy kontynentami (tj. w naszych danych: Amerykami, Europą i Azją) oraz czy jest sens analizować dane według takiego grupowania - ewentualnie zaproponujemy inne. Zacznijmy od wywołania funkcji `describeBy()`:
+```{r, class.output="scroll-350"}
+describeBy(data[3:10], group = data$continent)
+```
+Oczywiście funkcja wywołała się również dla kontynentu `Inny`, ale pamiętajmy, że jest to zlepek krajów z Afryki i Oceanii, a więc statystyki te są tak naprawdę bezużyteczne. Przechodząc jednak do pozostałych grup, tak jak wcześniej, obliczymy współczynnik zmienności. W tym celu stworzymy tabele pomocnicze dla każdego z kontynentów:
+```{r, class.output="scroll-350"}
+europa <- data %>%
+          filter(data$continent == "Europe")
+europa
+
+azja <- data %>%
+          filter(data$continent == "Asia")
+azja
+
+ameryki <- data %>%
+           filter(data$continent == "Americas")
+ameryki
+```
+Teraz dla każdej z tabeli możemy wywołać funkcję `wsp_zmiennosci()` (dla odpowiednich kolumn) oraz przypisać wyniki do list, ponieważ mogą się one przydać później:
+```{r, class.output="scroll-350"}
+statystyki_europa <- sapply(europa[3:10], wsp_zmiennosci)
+statystyki_europa
+statystyki_azja <- sapply(azja[3:10], wsp_zmiennosci)
+statystyki_azja
+statystyki_ameryki <- sapply(ameryki[3:10], wsp_zmiennosci)
+statystyki_ameryki
+```
+Przydałoby się, abyśmy następnie zobaczyli, jakie są różnice w zmienności danych statystyk pomiędzy kontynentami:  
+
+  + Europa, a Ameryki:
+```{r, class.output="scroll-350"}
+statystyki_europa - statystyki_ameryki
+```
+Zróżnicowanie statystyk krajów europejskich jest większe od tych z Ameryk (wyjątkiem jest wpółczynnik zmienności PKB per capita).  
+
+  + Europa, a Azja:
+```{r, class.output="scroll-350"}
+statystyki_europa - statystyki_azja
+```
+Zmienność większości statystyk krajów azjatyckich jest zauważalnie większa niż krajów europejskich. Ciekawym zjawiskiem jest jednak rozstrzał pomiędzy zróżnicowaniem inwestycji zagranicznych z 2007 i 2010 roku.
+
+  + Azja, a Ameryki:
+```{r, class.output="scroll-350"}
+statystyki_azja - statystyki_ameryki
+```
+W tym przypadku każda ze statystyk krajów azjatyckich cechuje się większą zmiennością niż te krajów Ameryk. Szczególnie widoczną różnicą jest zmienność w inwestycjach zagranicznych na terenach badanych państw.
+  
+  
+  
+Kolejnym możliwym podziałem będzie klasyfikacja ze względu na stopień rozwinięcia gospodarki. Będziemy więc operować na kolumnach `classification2007` oraz `classification2010`. Zacznijmy jednak od sprawdzenia, czy którykolwiek z badanych krajów zmienił swoją dotychczasową grupę po kryzysie finansowym z lat 2008-2009:
+```{r, class.output="scroll-350"}
+print(count(data[data$classification2007 != data$classification2010,]))
+```
+Jak widać, jest 6 takich krajów. Wyświetlmy je:
+```{r, class.output="scroll-350"}
+data[data$classification2007 != data$classification2010,]
+```
+Możemy zauważyć, że wszystkie z tych państw "awansowały" z gospodarek słabo rozwiniętych na średnio rozwinięte. Dodatkowo możemy obliczyć, o ile zmieniły się ich PKB per capita:
+```{r, class.output="scroll-350"}
+zmienione_kraje <-data[data$classification2007 != data$classification2010,]
+
+zmienione_kraje$gdp2010 - zmienione_kraje$gdp2007
+```
+Widzimy, że prawie wszystkie te zmiany nie przekroczyły 1 tys. dolarów. Z uwagi na to oraz na mniejszą liczność danych z krajów o słabo rozwiniętej gospodarce przyjmijmy, że będziemy wyliczać statystyki w odniesieniu do podziału gospodarek z 2007 roku. Zacznijmy więc tak jak poprzednio od wyliczenia podstawowych statystyk opisowych:
+```{r, class.output="scroll-350"}
+describeBy(data[3:10], group = data$classification2007)
+```
+Analogicznie do wcześniejszej analizy względem kontynentów, wyliczymy teraz współczynnik zmienności:
+```{r, class.output="scroll-350"}
+slabe <- data %>%
+          filter(data$classification2007 == "gospodarka słabo rozwinięta")
+slabe
+
+srednie <- data %>%
+          filter(data$classification2007 == "gospodarka średnio rozwinięta")
+srednie
+
+silne <- data %>%
+           filter(data$classification2007 == "gospodarka wysoko rozwinięta")
+silne
+
+gospodarki_slabo_rozwiniete <- sapply(slabe[3:10], wsp_zmiennosci)
+gospodarki_slabo_rozwiniete
+gospodarki_srednio_rozwiniete <- sapply(srednie[3:10], wsp_zmiennosci)
+gospodarki_srednio_rozwiniete
+gospodarki_wysoko_rozwiniete <- sapply(silne[3:10], wsp_zmiennosci)
+gospodarki_wysoko_rozwiniete
+```
+Porównamy teraz zmienności pomiędzy różnymi wielkościami gospodarek:
+
+  + Wysoko rozwinięte gospodarki, a słabo rozwinięte:
+```{r, class.output="scroll-350"}
+gospodarki_wysoko_rozwiniete - gospodarki_slabo_rozwiniete
+```
+Kraje roziwnięte cechuje znacząco większa zmienność w zakresie inwestycji zagranicznych, natomiast gospodarki słabo rozwinięte - w PKB per capita oraz bezrobociu.  
+
+  + Wysoko rozwinięte gospodarki, a średnio rozwinięte:
+```{r, class.output="scroll-350"}
+gospodarki_wysoko_rozwiniete - gospodarki_srednio_rozwiniete
+```
+Tak jak w przypadku poprzedniego porównania, kraje o silnych gospodarkach cechują większe wahania w zakresie inwestycji zagranicznych, a kraje średnio rozwinięte - w wartościach PKB per capita oraz bezrobocia.  
+
+  + Słabo rozwinięte gospodarki, a średnio rozwinięte:
+```{r, class.output="scroll-350"}
+gospodarki_slabo_rozwiniete - gospodarki_srednio_rozwiniete
+```
+Na podstawie wartości różnic w zmienności każdej ze statystyk możemy stwierdzić, że wahania w obu tych grupach są porównywalne. Największa niezgodność pojawia się w inwestycjach zagranicznych w 2007 r. i wynosi poniżej 30 p.p.. Nie jest ona jednak na tyle duża, aby dyskredytować pozostałe niskie wartości, a więc możemy stwierdzić, że pod względem zmienności w badanych przez nas statystykach kraje średnio oraz słabo rozwinięte są podobne.
+
+Po obliczeniu wszystkich podstawowych statystyk opisowych oraz ich zmienności według dwóch różnych grupowań, na podstawie rozbieżności ich wartości (współczynnik zmienności dla każdej statystyki) wewnątrz oraz pomiędzy innymi grupami, możemy jasno stwierdzić, że większy sens ma dzielenie krajów ze względu na stopień rozwinięcia gospodarki, niż ze względu na kontynent.
+
+### 3.3. Wizualizacje rozkładów
+Mając z tyłu głowy poprzednie wnioski, zbadamy teraz i porównamy rozkłady zmiennych z różnych lat dla każdego z typów gospodarek.  
+  
+Posłużmy się więc wcześniej stworzonymi tabelami pomocniczymi do narysowania wykresów pudełkowych dla poszczególnych statystyk:
+  
+  + PKB per capita
+```{r, class.output="scroll-350"}
+
+boxplot(silne$gdp2007,
+        silne$gdp2010,
+        main = "Porównanie rozkładów PKB per capita z 2007 i 2010 roku w
+        krajach
+        o silnych gospodarkach",
+        ylab = "PKB per capita (w tys.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(srednie$gdp2007,
+        srednie$gdp2010,
+        main = "Porównanie rozkładów PKB per capita z 2007 i 2010 roku w
+        krajach
+        o średnich gospodarkach",
+        ylab = "PKB per capita (w tys.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(slabe$gdp2007,
+        slabe$gdp2010,
+        main = "Porównanie rozkładów PKB per capita z 2007 i 2010 roku w
+        krajach
+        o słabych gospodarkach",
+        ylab = "PKB per capita (w tys.)",
+        names = c("2007 r.", "2010 r."))
+``` 
+
+Jak możemy zauważyć, kryzys wpłynął negatywanie na rozwój gospodarczy (mierzony w PKB per capita) w krajach wysoko rozwiniętych. W średnich natomiast obserwujemy małą zmianę. W przeciwieństwie do pierwszego analizowanego zbioru jest ona jednak pozytywna, ponieważ średnio statystyka ta wzrosła w badanej grupie. Jedynie w outlierach widzimy zmniejszenie się wartości statystyki. W najniższej klasie gospodarek wartości PKB per capita zwiększyły się. Część z nich, tak jak to wcześniej sprawdziliśmy, przebiła 5 tys. $ na osobę, co według naszych kryteriów zmieniło ich przydział na wyższą grupę. Zauważalna jest jednak jasna różnica pomiędzy wpływem kryzysu finansowego na kraje najbardziej rozwinięte a na pozostałe. Widocznym jest, że najbardziej ucierpiała ta grupa, w której giełda odgrywała najważniejszą rolę, co jest w pełni zrozumiałe.
+
+  + Bezrobocie
+```{r, class.output="scroll-350"}
+boxplot(silne$unemployment2007,
+        silne$unemployment2010,
+        main = "Porównanie rozkładów bezrobocia z 2007 i 2010 roku w krajach
+        o silnych gospodarkach",
+        ylab = "Bezrobocie (w proc.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(srednie$unemployment2007,
+        srednie$unemployment2010,
+        main = "Porównanie rozkładów bezrobocia z 2007 i 2010 roku w krajach
+        o średnich gospodarkach",
+        ylab = "Bezrobocie (w proc.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(slabe$unemployment2007,
+        slabe$unemployment2010,
+        main = "Porównanie rozkładów bezrobocia z 2007 i 2010 roku w krajach
+        o słabych gospodarkach",
+        ylab = "Bezrobocie (w proc.)",
+        names = c("2007 r.", "2010 r."))
+```
+  
+Podobnie jest z bezrobociem, które na skutek załamania giełdy zwiększyło się w znaczynym stopniu (warto zwrócić uwagę na bardzo oddalone wartości odstające w 2010 r.).
+W krajach słabo rozwiniętych minimalnie ono zmalało. Natomiast w przypadku średnich gospodarek rozpiętość danych zwiększyła się, ale mediana zmalała. Poraz kolejny możemy odzielić typy wpływu kryzysu na kraje o wysokim rozwoju gospodarczym i na resztę.
+  
+  + Inwestycje zagraniczne na terenie krajów
+```{r, class.output="scroll-350"}
+boxplot(silne$foreignInvestments2007,
+        silne$foreignInvestments2010,
+        main = "Porównanie rozkładów inwestycji zagranicznych z 2007 i 2010
+        roku na terenie krajów
+        o silnych gospodarkach",
+        ylab = "Inwestycje zagraniczne (w proc. PKB)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(srednie$foreignInvestments2007,
+        srednie$foreignInvestments2010,
+        main = "Porównanie rozkładów zagranicznych inwestycji z 2007 i 2010
+        roku na terenie krajów
+        o średnich gospodarkach",
+        ylab = "Inwestycje zgraniczne (w proc. PKB)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(slabe$foreignInvestments2007,
+        slabe$foreignInvestments2010,
+        main = "Porównanie rozkładów zagranicznych inwestycji z 2007 i 2010
+        roku na terenie krajów
+        o słabych gospodarkach",
+        ylab = "Inwestycje zgraniczne (w proc. PKB)",
+        names = c("2007 r.", "2010 r."))
+```
+  
+W przypadku udziału inwestycji zagranicznych w PKB możemy pierwszy raz zauważyć jednolity wpływ na każdy typ gospodarek. Jak możemy zaobserwować, w każdym z krajów ta część wytworzonych dóbr spadła. Najprawdopodobniej było to spowodowane mniejszą listą inwestorów spowodowaną niepewnością na rynkach finansowych.
+  
+  + Współczynnik Giniego
+```{r, class.output="scroll-350"}
+
+boxplot(silne$gini2007,
+        silne$gini2010,
+        main = "Porównanie rozkładów współczynnika Giniego z 2007 i 2010 roku w
+        krajach
+        o silnych gospodarkach",
+        ylab = "Wartość współczynnika Giniego (w proc.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(srednie$gini2007,
+        srednie$gini2010,
+        main = "Porównanie rozkładów współczynnika Giniego z 2007 i 2010 roku w
+        krajach
+        o średnich gospodarkach",
+        ylab = "Wartość współczynnika Giniego (w proc.)",
+        names = c("2007 r.", "2010 r."))
+
+boxplot(slabe$gini2007,
+        slabe$gini2010,
+        main = "Porównanie rozkładów współczynnika Giniego z 2007 i 2010 roku w
+        krajach
+        o słabych gospodarkach",
+        ylab = "Wartość współczynnika Giniego (w proc.)",
+        names = c("2007 r.", "2010 r."))
+```
+  
+W przypadku miary nierówności społecznej, jaką jest współczynnik Giniego, możemy stwierdzić, że różnice w rozkładzie są minimalne. Wnioskujemy z tego, że kryzys na rynku finansowym nie miał większego wpływu na zróżnicowanie dochodowe w wybranych krajach na świecie.
+
+### 3.4. Korelacje
+Ostatnim wstępnym badaniem na naszych danych będzie sprawdzenie ich zmiennych pod kątem korelacji.
+  
+Zaczniemy od sprawdzenia zależności pomiędzy zmiennymi ilościowymi. Jak mogliśmy już zauważyć w trakcie wcześniejszych badań, naszym zmiennym daleko jest do rozkładów normalnych. Musimy więc skorzystać z **współczynnika korelacji rangowej Spearmana**:
+```{r, class.output="scroll-350"}
+korelacjaDaneIlosciowe = cor(data[,c("gdp2007", "gdp2010", "unemployment2007", 
+                  "unemployment2010", "foreignInvestments2010",
+                  "foreignInvestments2007", "gini2007", "gini2010")], 
+          method = "spearman")
+korelacjaDaneIlosciowe
+```
+Dla zwiększenia czytelności zaokrąglimy jeszcze wartości współczynników do dwóch miejsc po przecinku.
+```{r, class.output="scroll-350"}
+round(korelacjaDaneIlosciowe, 2)
+```
+Dane te nanosimy na wykres. Potrzebny nam do tego będzie pakiet `corrplot`:
+```{r, class.output="scroll-350"}
+library(corrplot)
+corrplot(korelacjaDaneIlosciowe, method = "square", type = "upper")
+```
+  
+Jak możemy zaobserwować, jedynymi zmiennymi mocno skorelowanymi dodatnio są te same zmienne pochodzące z różnych lat. 
+  
+Ostatnim już krokiem będzie przeanalizowanie zmiennych jakościowych, czyli w naszym przypadku kontynentu oraz wielkości gospodarki. Stwórzmy najpierw tabele:
+```{r, class.output="scroll-350"}
+table(data[,c("continent", "classification2007")])
+```
+Nie jest ona zbyt czytelna. Do interpretacji posłużymy się więc wykresem (potrzebna nam będzie do tego biblioteka `ggplot2`):
+```{r, class.output="scroll-350"}
+library(ggplot2)
+
+data %>%
+  ggplot() +
+  geom_bar(aes(x = continent, fill = classification2007),
+           color = "white", 
+           position = "fill") +
+  theme_light() +
+  labs(title = "Kontynent, a wielkość gospodarki",
+       x = "Kontynent",
+       y = "Procent krajów",
+       fill = "Wielkość gospodarki")
+```
+
+Pamiętajmy jednak, że kontynent `Inny` nie powinien być interpretowany. Stwórzmy więc wykres, gdzie nie będzie on zawarty. Zacznijmy od tabeli pomocniczej:
+```{r, class.output="scroll-350"}
+dane_wykres <- data %>%
+               filter(data$continent != "Inny")
+dane_wykres
+```
+I przejdźmy do narysowania wykresu:
+```{r, class.output="scroll-350"}
+dane_wykres %>%
+  ggplot() +
+  geom_bar(aes(x = continent, fill = classification2007),
+           color = "white", 
+           position = "fill") +
+  theme_light() +
+  labs(title = "Kontynent, a wielkość gospodarki",
+       x = "Kontynent",
+       y = "Procent krajów",
+       fill = "Wielkość gospodarki w 2007 r.")
+```
+  
+Jak możemy zauważyć, największy udział krajów wysoko i średnio rozwiniętych jest w Europie. W Amerykach natomiast przeważają kraje o średniej wielkości gospodarek. Co ciekawe, w Azji znajduje się więcej krajów wysoko rozwiniętych niż w Amerykach, ale za to charakteryzuje się ona również największym udziałem krajów o słabych gospodarkach (oczywiście spośród naszych danych).
+  
+  
+Z ciekawości sprawdźmy jeszcze, czy rozkład ten znacząco zmienił się w 2010 roku:
+```{r, class.output="scroll-350"}
+dane_wykres %>%
+  ggplot() +
+  geom_bar(aes(x = continent, fill = classification2010),
+           color = "white", 
+           position = "fill") +
+  theme_light() +
+  labs(title = "Kontynent, a wielkość gospodarki",
+       x = "Kontynent",
+       y = "Procent krajów",
+       fill = "Wielkość gospodarki w 2010 r.")
+```
+  
+Jedyną znaczącą zmianą jest powiększenie się dominacji gospodarek średniej wielkości w Amerykach.
+
